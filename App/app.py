@@ -5,8 +5,13 @@ import plotly.express as px
 import plotly.graph_objs as go
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn import metrics
+from sklearn.model_selection import train_test_split
+from sklearn import svm
 
 app_ui = ui.page_fluid(
+    ui.output_plot("WinPercent"),
+    ui.output_plot("SVM"),
     ui.input_select("x", "Select Team", 
                     {'Adelaide':'Adelaide',
                      'Brisbane Lions':'Brisbane Lions',
@@ -37,7 +42,24 @@ app_ui = ui.page_fluid(
 def server(input, output, session):
     df = pd.read_csv(Path(__file__).parent / "AFL.csv")
     colour_codes = {'Geelong': '#002B5C', 'Sydney':'#E1251B' , 'Hawthorn':'#4D2004', 'Collingwood': '#000000', 'Richmond':'#FFD200', 'West Coast':'#F2A900','Adelaide':'#E21937','Fremantle':'#2A0D54','Port Adelaide':'#008AAB', 'Western Bulldogs':'#20539D', 'Essendon':'#CC2031', 'Greater Western Sydney':'#F47920', 'North Melbourne':'#1A3B8E', 'St Kilda':'#ED1B2F', 'Melbourne':'#0F1131', 'Brisbane Lions':'#FDBE57', 'Carlton':'#031A29', 'Gold Coast': '#FFDD00' }
-        
+
+    @output
+    @render.plot(alt="A histogram")
+    def WinPercent():
+        team_wins = df.groupby(['Team', 'WinLoss']).size().reset_index(name='count')
+        team_wins['percentage'] = round((team_wins['count'] / team_wins.groupby('Team')['count'].transform('sum'))*100)
+        team_wins = team_wins.iloc[1::2]
+        team_wins = team_wins.sort_values(by = 'percentage', ascending=False)
+        fig, ax = plt.subplots(figsize=(18,5))
+        colour_codes = ['#002B5C', '#E1251B' , '#4D2004', '#000000', '#FFD200', '#F2A900', '#E21937', '#2A0D54', '#008AAB', '#20539D', '#CC2031','#F47920','#1A3B8E', '#ED1B2F', '#0F1131', '#FDBE57', '#031A29', '#FFDD00']
+        bar = ax.bar(team_wins['Team'], team_wins['percentage'], color = colour_codes)
+        plt.xticks(rotation = 90)
+        plt.title('Win percentage per team since 2011')
+        plt.xlabel("Team")
+        plt.ylabel("Percentage")
+        ax.bar_label(bar)
+        plt.show()
+    
     @output
     @render.plot(alt="A histogram")
     def DayOfWeek():
@@ -93,7 +115,7 @@ def server(input, output, session):
         return fig
 
     @output
-    @render.plot(alt="A line plot")
+    @render.plot(alt="A scatter plot")
     def Crowd():  
         Team = df[df['Team'] == input.x()]
         Season = Team[Team['Season'] == int(input.y())]
@@ -102,7 +124,6 @@ def server(input, output, session):
         Season['MCG'] = 100024
         Season['Optus'] = 61266
         Season['SCG'] = 48000
-
 
         fig, ax = plt.subplots(figsize=(18,5))
         plt.scatter(Wins['Round'], Wins['ActualCrowd'], c = 'lightgreen', label = 'Win')
@@ -116,5 +137,36 @@ def server(input, output, session):
         plt.ylabel("Crowd Attendance")
         plt.legend(loc='upper right')
         return fig
+        
+    @output
+    @render.plot(alt="A confusion matrix")
+    def SVM():  
+        Continuous_COLS = ['FinalScore', 'Time', 'ActualCrowd',  'Margin']
+        Continuous_COLS = df[Continuous_COLS]
+        normalised_df=(Continuous_COLS-Continuous_COLS.min())/(Continuous_COLS.max()-Continuous_COLS.min()) # Normalising
+        normalised_df['Team'] = df['Team']
+        normalised_df['Round'] = df['Round']
+        normalised_df['HomeAway'] = df['HomeAway']
+        normalised_df['Day'] = df['Day']
+        normalised_df['Venue'] = df['Venue']
+        normalised_df['Season'] = df['Season']
+        normalised_df['Opposition'] = df['Opposition']
+        normalised_df['LadderPosition'] = df['LadderPosition']
+        normalised_df['WinLoss'] = df['WinLoss']
+        vectorized = pd.get_dummies(normalised_df, columns=['Team', 'Round', 'HomeAway', 'Day', 'Venue', 'Season', 'Opposition', 'LadderPosition']) # Converting to indicator variables
+        
+        TARGET_COLS = ['WinLoss']
+        train, test = train_test_split(vectorized, train_size=0.8, random_state=0)
+        X_train, y_train = train.drop(TARGET_COLS, axis=1), train[TARGET_COLS]
+        X_test, y_test = test.drop(TARGET_COLS, axis=1), test[TARGET_COLS]
+        print(f'{len(X_train)} training instances, {len(X_test)} test instances')
+        
+        clf = svm.SVC()
+        clf.fit(X_train, y_train)
+        predictions = clf.predict(X_test)
+        confusion_matrix = metrics.confusion_matrix(y_test, predictions)
+        cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix = confusion_matrix, display_labels = ['Win', 'Loss'])
+        cm_display.plot()
+        plt.show()
 
 app = App(app_ui, server, debug=True)
